@@ -18,7 +18,8 @@ jobs:
       - name: Setup Environment
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install google-generativeai google-api-python-client google-auth-oauthlib
+          # Dono libraries install kar rahe hain safety ke liye
+          pip install google-genai google-generativeai google-api-python-client google-auth-oauthlib
           echo "${{ secrets.TOKEN_PICKLE }}" > token.pickle
 
       - name: 1. Brain (Analyze)
@@ -33,10 +34,13 @@ jobs:
 
       - name: 4. Move Image & Cleanup
         run: |
-          # Pehli image uthao jo process hui
-          IMG=$(head -n 1 metadata.txt)
-          mv "$IMG" Used/
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
-          git add Used/ Images/
-          git commit -m "Auto: Content Processed" && git push || echo "No changes"
+          if [ -f metadata.txt ]; then
+            IMG=$(head -n 1 metadata.txt | tr -d '\r')
+            mv "$IMG" Used/
+            git config --global user.name "Bot"
+            git config --global user.email "bot@github.com"
+            git add Used/ Images/
+            git commit -m "Auto: Content Processed" && git push || echo "No changes"
+          else
+            echo "No metadata.txt found, skipping cleanup."
+          fi
