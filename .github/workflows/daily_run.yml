@@ -1,0 +1,40 @@
+name: Krishna Reel Bot
+
+on:
+  schedule:
+    - cron: '0 2,8,14 * * *' # Din mein 3 baar (IST ke hisaab se adjust kar lenge)
+  workflow_dispatch: # Manual button chalane ke liye
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Dependencies
+        run: pip install google-generativeai google-api-python-client google-auth-oauthlib
+
+      - name: Restore Token Pickle
+        run: echo "${{ secrets.TOKEN_PICKLE }}" > token.pickle
+
+      - name: Run Bot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python bot.py
+
+      - name: Commit & Push Changes
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git add Used/ Images/
+          git commit -m "Image moved to used [skip ci]" || exit 0
+          git push
