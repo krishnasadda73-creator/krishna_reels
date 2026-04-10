@@ -1,50 +1,67 @@
-import os, sys
-try:
-    from google import genai
-except ImportError:
-    print("Library missing. Run: pip install google-genai")
-    sys.exit(1)
+import os
+import sys
+from google import genai
 
+# ================== CONFIG ==================
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Simple client setup - AI Studio key handles everything
+if not GEMINI_API_KEY:
+    print("❌ API key missing! Set GEMINI_API_KEY")
+    sys.exit(1)
+
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+# ================== MAIN ==================
 def main():
-    if not os.path.exists("Images/"):
-        print("Images folder missing!"); sys.exit(1)
-        
-    images = [f for f in os.listdir("Images/") if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-    if not images:
-        print("No images found in Images/ folder."); sys.exit(0)
+    folder = "Images"
 
-    img_path = os.path.join("Images/", images[0])
-    print(f"--- Attempting to analyze: {img_path} ---")
-
-    try:
-        # Standard stable model call
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=[
-                "Analyze this Krishna image. Output format: Quote: [Hindi Quote] | Title: [Title]",
-                genai.types.Part.from_bytes(
-                    data=open(img_path, "rb").read(),
-                    mime_type="image/jpeg" if img_path.endswith((".jpg", ".jpeg")) else "image/png"
-                )
-            ]
-        )
-        
-        if response.text:
-            with open("metadata.txt", "w", encoding="utf-8") as f:
-                f.write(f"{img_path}\n{response.text}")
-            print(f"Success! Metadata saved for: {img_path}")
-        else:
-            print("Empty response from Gemini."); sys.exit(1)
-            
-    except Exception as e:
-        print(f"Gemini API Error: {e}")
-        # Agar ye fail hua, toh humein pata chal jayega ki key sahi hai ya nahi
+    if not os.path.exists(folder):
+        print("❌ Images folder missing!")
         sys.exit(1)
 
+    images = [f for f in os.listdir(folder) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+
+    if not images:
+        print("⚠️ No images found in Images/")
+        sys.exit(0)
+
+    print(f"📸 Found {len(images)} images\n")
+
+    for img in images:
+        img_path = os.path.join(folder, img)
+        print(f"👉 Processing: {img}")
+
+        try:
+            # Read image safely
+            with open(img_path, "rb") as f:
+                img_bytes = f.read()
+
+            # Gemini request
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",   # ✅ latest working model
+                contents=[
+                    "Generate a short emotional Krishna quote in Hindi and a viral YouTube Shorts title. Format: Quote: ... | Title: ...",
+                    genai.types.Part.from_bytes(
+                        data=img_bytes,
+                        mime_type="image/jpeg" if img.lower().endswith((".jpg", ".jpeg")) else "image/png"
+                    )
+                ]
+            )
+
+            if response.text:
+                with open("metadata.txt", "a", encoding="utf-8") as f:
+                    f.write(f"{img}\n{response.text}\n\n")
+
+                print(f"✅ Done: {img}")
+
+            else:
+                print(f"⚠️ Empty response: {img}")
+
+        except Exception as e:
+            print(f"❌ Error in {img}: {e}")
+
+    print("\n🎉 All images processed!")
+
+# ================== RUN ==================
 if __name__ == "__main__":
     main()
