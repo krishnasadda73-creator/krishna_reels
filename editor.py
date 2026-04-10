@@ -1,27 +1,115 @@
-import os, sys, subprocess, random
+import random
+import json
+import subprocess
+from pathlib import Path
 
-def main():
-    if not os.path.exists("metadata.txt"):
-        print("Editor Error: No metadata found!"); sys.exit(1)
+# We will look for PNGs in these folders, in this order.
+FRAME_DIRS = [Path("output"), Path("images")]
 
-    with open("metadata.txt", "r", encoding="utf-8") as f:
-        lines = f.readlines()
-        img_path = lines[0].strip()
-        content = lines[1].strip()
+BGM_DIR = Path("bgm")
+STATE_DIR = Path("state")
+USED_MUSIC_FILE = STATE_DIR / "used_music.json"
 
-    quote = content.split("|")[0].replace("Quote:", "").strip().replace("'", "")
-    bgms = [f for f in os.listdir("BGM/") if f.endswith('.mp3')]
-    bgm_path = os.path.join("BGM/", random.choice(bgms))
-    
-    cmd = [
-        'ffmpeg', '-y', '-loop', '1', '-i', img_path, '-i', bgm_path,
-        '-vf', f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='{quote}':fontcolor=white:fontsize=55:x=(w-text_w)/2:y=(h-text_h)/2:box=1:boxcolor=black@0.6:boxborderw=15",
-        '-t', '5', '-pix_fmt', 'yuv420p', '-shortest', 'final_reel.mp4'
+
+# ---------- FIND LATEST IMAGE (AUTO, output/ OR images/) ----------
+
+def find_latest_image():
+    candidates = []
+
+    for d in FRAME_DIRS:
+        if not d.exists():
+            continue
+        candidates.extend(list(d.glob("*.png")))
+
+    if not candidates:
+        raise SystemExit("❌ No PNG image found inside output/ or images/ folder")
+
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    print("🖼️ Using image:", latest)
+    return latest
+
+
+# ---------- MUSIC STATE (NO DUPLICATES) ----------
+
+def load_used_music():
+    if not USED_MUSIC_FILE.exists():
+        return []
+    try:
+        with open(USED_MUSIC_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_used_music(names):
+    STATE_DIR.mkdir(exist_ok=True)
+    with open(USED_MUSIC_FILE, "w", encoding="utf-8") as f:
+        json.dump(names, f, ensure_ascii=False, indent=2)
+
+
+def pick_bgm():
+    if not BGM_DIR.exists():
+        raise SystemExit("❌ bgm/ folder not found in repo")
+
+    tracks = [
+        p for p in BGM_DIR.iterdir()
+        if p.suffix.lower() in {".mp3", ".wav", ".m4a"}
     ]
-    
-    if subprocess.run(cmd).returncode != 0:
-        print("Editor Error: FFmpeg failed!"); sys.exit(1)
-    print("Editor Success: Video rendered.")
+
+    if not tracks:
+        raise SystemExit("❌ No BGM files found in bgm/ folder")
+
+    used = load_used_music()
+    unused = [p for p in tracks if p.name not in used]
+
+    # If all used, reset and start again (still random)
+    if not unused:
+        used = []
+        unused = tracks
+
+    chosen = random.choice(unused)
+    used.append(chosen.name)
+    save_used_music(used)
+
+    return chosen
+
+
+# ---------- CREATE VIDEO ----------
+
+def render_video(duration_seconds=15):
+    frame = find_latest_image()
+    bgm = pick_bgm()
+
+    OUTPUT_DIR = Path("output")
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    out_video = OUTPUT_DIR / "krishna_reel.mp4"
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-loop", "1",
+        "-i", str(frame),
+        "-i", str(bgm),
+        "-c:v", "libx264",
+        "-t", str(duration_seconds),
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-shortest",
+        "-vf",
+        "scale=1080:1920:force_original_aspect_ratio=decrease,"
+        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+        str(out_video),
+    ]
+
+    print("🎵 Using BGM:", bgm.name)
+    print("🎬 Creating video with ffmpeg...")
+
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        raise SystemExit("❌ ffmpeg failed when rendering video")
+
+    print("✅ Video created at:", out_video)
+
 
 if __name__ == "__main__":
-    main()
+    render_video()
