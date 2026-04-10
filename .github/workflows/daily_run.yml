@@ -1,57 +1,42 @@
-name: Krishna Reel Bot
-
+name: Krishna Modular Bot
 on:
   schedule:
-    # Din mein 3 baar: Subah 8:30, Dopahar 2:30, Raat 8:30 (IST approx)
-    - cron: '0 3,9,15 * * *' 
-  workflow_dispatch: # Manual button ke liye
+    - cron: '0 3,9,15 * * *'
+  workflow_dispatch:
 
 jobs:
-  build:
+  run-automation:
     runs-on: ubuntu-latest
-    # Permission zaroori hai repo mein wapas write karne ke liye
     permissions:
       contents: write
-
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
-      - name: Install Dependencies
-        run: pip install google-generativeai google-api-python-client google-auth-oauthlib
-
-      - name: Restore Token Pickle
-        run: echo "${{ secrets.TOKEN_PICKLE }}" > token.pickle
-
-      - name: Run Bot
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python bot.py
-
-      - name: Cleanup & Commit Changes
+      - name: Setup Environment
         run: |
-          git config --global user.name "GitHub Action Bot"
-          git config --global user.email "action@github.com"
-          
-          # Faltu files ko git ignore karega
-          rm -f final_reel.mp4
-          rm -f token.pickle
-          
-          # Sirf folders ko track karo
-          git add Images/ Used/
-          
-          # Agar koi image move hui hai toh hi commit hoga
-          if git diff --staged --quiet; then
-            echo "No changes to commit. Maybe folder was already empty?"
-          else
-            git commit -m "Automated Content Update: Image moved to Used/"
-            git push
-          fi
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install google-generativeai google-api-python-client google-auth-oauthlib
+          echo "${{ secrets.TOKEN_PICKLE }}" > token.pickle
+
+      - name: 1. Brain (Analyze)
+        env: { GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}" }
+        run: python brain.py
+
+      - name: 2. Editor (Render)
+        run: python editor.py
+
+      - name: 3. Uploader (YouTube)
+        run: python uploader.py
+
+      - name: 4. Move Image & Cleanup
+        run: |
+          # Pehli image uthao jo process hui
+          IMG=$(head -n 1 metadata.txt)
+          mv "$IMG" Used/
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          git add Used/ Images/
+          git commit -m "Auto: Content Processed" && git push || echo "No changes"
