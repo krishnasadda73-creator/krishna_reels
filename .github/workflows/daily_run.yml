@@ -1,46 +1,42 @@
-name: Krishna Modular Bot
+name: Krishna Reels Auto Upload
+
 on:
-  schedule:
-    - cron: '0 3,9,15 * * *'
   workflow_dispatch:
 
 jobs:
-  run-automation:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Setup Environment
+      - name: Install system dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
-          # Dono libraries install kar rahe hain safety ke liye
-          pip install google-genai google-generativeai google-api-python-client google-auth-oauthlib
-          echo "${{ secrets.TOKEN_PICKLE }}" > token.pickle
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto
 
-      - name: 1. Brain (Analyze)
-        env: { GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}" }
-        run: python brain.py
-
-      - name: 2. Editor (Render)
-        run: python editor.py
-
-      - name: 3. Uploader (YouTube)
-        run: python uploader.py
-
-      - name: 4. Move Image & Cleanup
+      - name: Install Python dependencies
         run: |
-          if [ -f metadata.txt ]; then
-            IMG=$(head -n 1 metadata.txt | tr -d '\r')
-            mv "$IMG" Used/
-            git config --global user.name "Bot"
-            git config --global user.email "bot@github.com"
-            git add Used/ Images/
-            git commit -m "Auto: Content Processed" && git push || echo "No changes"
-          else
-            echo "No metadata.txt found, skipping cleanup."
-          fi
+          pip install -r requirements.txt
+
+      - name: Load API Keys
+        run: |
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> $GITHUB_ENV
+          echo "YT_CLIENT_ID=${{ secrets.YT_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "YT_CLIENT_SECRET=${{ secrets.YT_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "YT_REFRESH_TOKEN=${{ secrets.YT_REFRESH_TOKEN }}" >> $GITHUB_ENV
+
+      - name: Generate Image With Auto Hindi Text
+        run: python create_image.py
+
+      - name: Create Video
+        run: python create_video.py
+
+      - name: Upload to YouTube
+        run: python youtube_upload.py output/krishna_reel.mp4
