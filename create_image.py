@@ -1,143 +1,115 @@
-import os
 import random
-import textwrap
-from PIL import Image, ImageDraw, ImageFont
-import google.generativeai as genai
+import json
+import subprocess
+from pathlib import Path
 
-# =========================
-# CONFIG
-# =========================
-IMAGE_FOLDER = "images"
-OUTPUT_FOLDER = "output"
-OUTPUT_IMAGE = os.path.join(OUTPUT_FOLDER, "reel_frame.png")
-FONT_PATH = "fonts/NotoSansDevanagari-Regular.ttf"
-FONT_SIZE = 64
+# We will look for PNGs in these folders, in this order.
+FRAME_DIRS = [Path("output"), Path("images")]
 
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+BGM_DIR = Path("bgm")
+STATE_DIR = Path("state")
+USED_MUSIC_FILE = STATE_DIR / "used_music.json"
 
-# =========================
-# GEMINI SETUP (AUTO MODEL PICK)
-# =========================
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-def get_best_available_model():
-    print("🔍 Fetching available Gemini models...")
-    models = genai.list_models()
+# ---------- FIND LATEST IMAGE (AUTO, output/ OR images/) ----------
 
-    # Prefer fast + cheap models
-    priority = [
-        "models/gemini-2.0-flash",
-        "models/gemini-2.5-flash",
-        "models/gemini-flash-latest",
-        "models/gemini-pro"
-    ]
+def find_latest_image():
+    candidates = []
 
-    available = [m.name for m in models]
+    for d in FRAME_DIRS:
+        if not d.exists():
+            continue
+        candidates.extend(list(d.glob("*.png")))
 
-    for preferred in priority:
-        if preferred in available:
-            print("✅ Using Gemini model:", preferred)
-            return genai.GenerativeModel(preferred)
+    if not candidates:
+        raise SystemExit("❌ No PNG image found inside output/ or images/ folder")
 
-    # Fallback: use first available model
-    print("⚠️ Using fallback model:", available[0])
-    return genai.GenerativeModel(available[0])
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    print("🖼️ Using image:", latest)
+    return latest
 
-model = get_best_available_model()
 
-# =========================
-# GENERATE KRISHNA HINDI LINE
-# =========================
-def generate_krishna_line():
-    prompt = """
-एक गहरी, सकारात्मक और शांत हिंदी पंक्ति लिखें जो श्रीकृष्ण पर पूर्ण भरोसा, शरण और निश्चिंतता को दिखाए।
+# ---------- MUSIC STATE (NO DUPLICATES) ----------
 
-नियम:
-- सिर्फ हिंदी
-- कोई इमोजी नहीं
-- 1 या 2 छोटी पंक्तियाँ
-- भाव: श्रद्धा, भरोसा, शांति, कृष्ण की शरण
-- किसी पुराने वाक्य की कॉपी नहीं
-"""
-
+def load_used_music():
+    if not USED_MUSIC_FILE.exists():
+        return []
     try:
-        response = model.generate_content(prompt)
-        text = response.text.strip()
-        return " ".join(text.split())
-    except Exception as e:
-        print("⚠️ Gemini failed, using fallback text.")
-        return "जब कृष्ण साथ हों, तो हर डर शांति में बदल जाता है।"
+        with open(USED_MUSIC_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
 
-# =========================
-# PICK RANDOM IMAGE
-# =========================
-def pick_random_image():
-    images = [
-        f for f in os.listdir(IMAGE_FOLDER)
-        if f.lower().endswith((".png", ".jpg", ".jpeg"))
+
+def save_used_music(names):
+    STATE_DIR.mkdir(exist_ok=True)
+    with open(USED_MUSIC_FILE, "w", encoding="utf-8") as f:
+        json.dump(names, f, ensure_ascii=False, indent=2)
+
+
+def pick_bgm():
+    if not BGM_DIR.exists():
+        raise SystemExit("❌ bgm/ folder not found in repo")
+
+    tracks = [
+        p for p in BGM_DIR.iterdir()
+        if p.suffix.lower() in {".mp3", ".wav", ".m4a"}
     ]
 
-    if not images:
-        raise RuntimeError("❌ No images found in images/ folder")
+    if not tracks:
+        raise SystemExit("❌ No BGM files found in bgm/ folder")
 
-    chosen = random.choice(images)
-    print("🖼 Using Krishna image:", chosen)
-    return os.path.join(IMAGE_FOLDER, chosen)
+    used = load_used_music()
+    unused = [p for p in tracks if p.name not in used]
 
-# =========================
-# DRAW CENTERED TEXT
-# =========================
-def draw_centered_text(image, text):
-    draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
+    # If all used, reset and start again (still random)
+    if not unused:
+        used = []
+        unused = tracks
 
-    lines = textwrap.wrap(text, width=18)
+    chosen = random.choice(unused)
+    used.append(chosen.name)
+    save_used_music(used)
 
-    heights = []
-    for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
-        heights.append(bbox[3] - bbox[1])
+    return chosen
 
-    total_height = sum(heights) + (len(lines) - 1) * 12
-    y = (image.height - total_height) // 2
 
-    for i, line in enumerate(lines):
-        bbox = draw.textbbox((0, 0), line, font=font)
-        w = bbox[2] - bbox[0]
-        x = (image.width - w) // 2
+# ---------- CREATE VIDEO ----------
 
-        draw.text(
-            (x, y),
-            line,
-            font=font,
-            fill="white",
-            stroke_width=3,
-            stroke_fill="black",
-        )
+def render_video(duration_seconds=15):
+    frame = find_latest_image()
+    bgm = pick_bgm()
 
-        y += heights[i] + 12
+    OUTPUT_DIR = Path("output")
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    out_video = OUTPUT_DIR / "krishna_reel.mp4"
 
-    return image
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-loop", "1",
+        "-i", str(frame),
+        "-i", str(bgm),
+        "-c:v", "libx264",
+        "-t", str(duration_seconds),
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-shortest",
+        "-vf",
+        "scale=1080:1920:force_original_aspect_ratio=decrease,"
+        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+        str(out_video),
+    ]
 
-# =========================
-# MAIN
-# =========================
-def main():
-    print("🎨 Picking Krishna image...")
-    img_path = pick_random_image()
+    print("🎵 Using BGM:", bgm.name)
+    print("🎬 Creating video with ffmpeg...")
 
-    print("🕉 Generating Krishna Hindi Quote via Gemini...")
-    text = generate_krishna_line()
-    print("📜 Quote:", text)
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        raise SystemExit("❌ ffmpeg failed when rendering video")
 
-    print("🖼 Creating 1080x1920 reel frame...")
-    base_img = Image.open(img_path).convert("RGB")
-    base_img = base_img.resize((1080, 1920))
+    print("✅ Video created at:", out_video)
 
-    final = draw_centered_text(base_img, text)
-    final.save(OUTPUT_IMAGE)
-
-    print("✅ Frame created:", OUTPUT_IMAGE)
 
 if __name__ == "__main__":
-    main()
+    render_video()
